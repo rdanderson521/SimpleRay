@@ -2,6 +2,7 @@
 #include <vector>
 #include <cmath>
 #include <iostream>
+#include <algorithm>
 
 #include "CImg.h"
 using namespace cimg_library;
@@ -21,10 +22,21 @@ struct Vec3X
 
   Vec3X<T> operator-(Vec3X<T> b);
 
+  Vec3X<T> operator-();
+
   Vec3X<T> operator*(T b);
 
   Vec3X<T> operator/(T b);
+
+  T operator[](size_t idx);
 };
+
+template <class T>
+Vec3X<T> operator*(T a, Vec3X<T> b)
+{
+  Vec3X<T> c = {a*b.x, a*b.y, a*b.z};
+  return c;
+}
 
 template <class T>
 T Vec3X<T>::dot(Vec3X<T> b)
@@ -60,6 +72,13 @@ Vec3X<T> Vec3X<T>::operator-(Vec3X<T> b)
 }
 
 template <class T>
+Vec3X<T> Vec3X<T>::operator-()
+{
+  Vec3X<T> c = {-this->x, -this->y, -this->z};
+  return c;
+}
+
+template <class T>
 Vec3X<T> Vec3X<T>::operator*(T b)
 {
   Vec3X<T> c = {this->x*b, this->y*b, this->z*b};
@@ -71,6 +90,21 @@ Vec3X<T> Vec3X<T>::operator/(T b)
 {
   Vec3X<T> c = {this->x/b, this->y/b, this->z/b};
   return c;
+}
+
+template <class T>
+T Vec3X<T>::operator[](size_t idx)
+{
+  switch (idx)
+  {
+    case (0):
+      return x;
+    case (1):
+      return y;
+    case (2):
+      return z;
+  }
+  return 0;
 }
 
 typedef Vec3X<double> Vec3d;
@@ -106,13 +140,23 @@ struct RayHit
   Vec3d hitPos;
   Vec3d hitNorm;
   double dist;
+
+  RayHit();
 };
+
+RayHit::RayHit()
+{
+  colour = {0,0,0};
+  hitPos = {0,0,0};
+  hitNorm = {0,0,0};
+  dist = 0;
+}
 
 
 class Object
 {
 public:
-  virtual bool intersect(Ray ray, RayHit& hit)=0;
+  virtual bool intersect(Ray ray, RayHit& hit) {return false;};
 
 private:
     BoundingBox bounds;
@@ -161,6 +205,9 @@ bool Sphere::intersect(Ray ray, RayHit& hit)
   {
     double dist = -(ray.direction.norm().dot(ray.origin - this->origin)) - sqrt(delta);
     hit.hitPos = ray.origin + (ray.direction.norm()*dist);
+    hit.dist = dist;
+    hit.colour = this->colour;
+    hit.hitNorm = (hit.hitPos - this->origin).norm();
     return true;
   }
   return false;
@@ -173,6 +220,8 @@ public:
   //https://gabrielgambetta.com/computer-graphics-from-scratch/09-perspective-projection.html
 
   Camera(double d, double fov, Vec2i size, Vec3d o = {0,0,0}, Vec3d dir = {0,0,1});
+
+  Vec3d origin() {return o;}
 
   Vec2i project(Vec3d &p);
 
@@ -217,8 +266,6 @@ void Camera::getRay(Vec2i pos, Ray &ray)
   dir.y = ((pos.y - (sizeC.y/2)) * sizeV.y) / sizeC.y;
   dir.z = d;
 
-
-
   ray.direction = dir.norm();
 
   ray.origin = o;
@@ -227,17 +274,20 @@ void Camera::getRay(Vec2i pos, Ray &ray)
 const int WIDTH = 800;
 const int HEIGHT = 600;
 const Vec2i C_SIZE = {WIDTH,HEIGHT};
-const double FOV = 1.0472;//60 deg
+const double FOV = 0.698132;//40 deg
 const double NEAR = 0.5;
 
 int main (int argc, char *argv[])
 {
   CImg<unsigned char> img(WIDTH,HEIGHT,1,3,0);
 
-  Camera cam(NEAR,FOV,C_SIZE,{0,0,0},{0,0,1});
+  Camera cam(NEAR,FOV,C_SIZE,{0,-2,-5},{0,0,1});
 
-  Sphere obj({0,0,5},2,{255,0,0});
-  Sphere obj2({0,0,3},1,{255,0,0});
+  Object *objArr[2];
+  objArr[0] = new Sphere({-1,0,5},3,{255,0,0});
+  objArr[1] = new Sphere({4,0,2},1,{0,255,0});
+
+  Vec3d light = {8,-2, -3};
 
   for (int i = 0; i < HEIGHT; i++)
   {
@@ -246,16 +296,99 @@ int main (int argc, char *argv[])
       Ray ray;
       cam.getRay({j,i},ray);
 
-      RayHit hit;
+      RayHit closestHit;
+      closestHit.dist = DBL_MAX;
 
-      if(obj.intersect(ray, hit))
+      bool objectHit = false;
+
+      for (Object *obj: objArr)
       {
-        img.atXY(j,i) = 255;
+        RayHit hit;
+        if(obj->intersect(ray, hit))
+        {
+          objectHit = true;
+          if (hit.dist < closestHit.dist)
+          {
+            closestHit = hit;
+          }
+        }
       }
-      if(obj2.intersect(ray, hit))
+
+      Vec3d vecToGround;
+      if (ray.direction.y > 0)
       {
-        img.atXY(j,i,0,1) = 255;
+        double yFactor = 0.75 - cam.origin().y;
+        double rayDirY = ray.direction.y;
+        vecToGround =  (ray.direction/ rayDirY) * yFactor;// + cam.origin();
+
+        double dist = vecToGround.abs();
+
+        if (dist < closestHit.dist)
+        {
+          closestHit.dist = dist;
+          closestHit.hitNorm = Vec3d{0,-1,0}.norm();
+          closestHit.hitPos = vecToGround + cam.origin();
+
+          Vec3d comp = vecToGround;
+
+          if (comp.x < 0)
+          {
+            comp.x = -comp.x + 1;
+          }
+          if (comp.z < 0)
+          {
+            comp.z = -comp.z + 1;
+          }
+          if ((int)(comp.x) % 2 == 0)
+          {
+            closestHit.colour =  ((int)(comp.z) % 2 == 0) ? Vec3i{0,0,255} : Vec3i{255,255,255};
+          }
+          else
+          {
+            closestHit.colour =  ((int)(comp.z) % 2 != 0) ? Vec3i{0,0,255} : Vec3i{255,255,255};
+          }
+
+        }
       }
+
+      Ray shadowRay;
+      shadowRay.depth = 1;
+      shadowRay.origin = closestHit.hitPos;
+      shadowRay.direction = (light - closestHit.hitPos).norm();
+
+      bool shadowRayHit = false;
+
+      for (Object *obj: objArr)
+      {
+        RayHit hit;
+        if(obj->intersect(shadowRay, hit))
+        {
+          if (hit.dist > 0.)
+            shadowRayHit = true;
+        }
+      }
+
+      Vec3d lightDir = (light - closestHit.hitPos).norm();
+
+      double diffuse = std::max(closestHit.hitNorm.dot(lightDir),0.);
+
+      Vec3d reflect = (lightDir - 2. * closestHit.hitNorm.norm().dot(lightDir) * closestHit.hitNorm.norm()).norm();
+
+      double specular = pow( std::max(reflect.dot(ray.direction.norm()), 0.),8);
+
+      for (int c = 0; c < 3; c++)
+      {
+        if (!shadowRayHit)
+        {
+          img.atXY(j,i,0,c) = std::min( (std::min(diffuse  + 0.1, 1.0) * closestHit.colour[c]) + ( specular * 255), 255.);
+        }
+        else
+        {
+          img.atXY(j,i,0,c) = std::min(0.1 * closestHit.colour[c] , 255.);
+        }
+
+      }
+
     }
   }
 
